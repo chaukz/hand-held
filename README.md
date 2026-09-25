@@ -165,10 +165,10 @@ handheld/
 
 ### Stage 1: One program (the handheld is usable)
 
-- [ ] `pins.h` with every pin
+- [x] `pins.h` with every pin
 - [ ] Display driver: fill screen, pixels, rectangles, text
 - [ ] Framebuffer + `Canvas` class, push full frame to screen
-- [ ] Input driver: debounced buttons → `InputEvent` queue
+- [x] Input driver: debounced buttons → `InputEvent` queue
 - [ ] Audio: beep on button press
 - [ ] Fixed-timestep main loop (target 30 FPS)
 - [ ] Test-screen app: shows which buttons are pressed
