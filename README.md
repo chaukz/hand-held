@@ -166,7 +166,7 @@ handheld/
 ### Stage 1: One program (the handheld is usable)
 
 - [x] `pins.h` with every pin
-- [ ] Display driver: fill screen, pixels, rectangles, text
+- [x] Display driver: fill screen, pixels, rectangles, text
 - [ ] Framebuffer + `Canvas` class, push full frame to screen
 - [x] Input driver: debounced buttons → `InputEvent` queue
 - [ ] Audio: beep on button press
