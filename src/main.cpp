@@ -14,11 +14,23 @@ void setup()
     Serial.begin(115200);
     Serial.println("Handheld boot OK");
     display.begin();
-    canvas = &display.getCanvas();
+    Canvas *current = display.getCanvas();
+    if (current == nullptr)
+    {
+        Serial.println("Failed to get canvas from display!");
+    }
+    else
+    {
+        canvas = current;
+    }
 }
 
 void loop()
 {
+    if (canvas == nullptr)
+    {
+        return;
+    }
     static uint32_t lastMs = 0;
     uint32_t now = millis();
     uint32_t elapsed = now - lastMs;

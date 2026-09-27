@@ -167,7 +167,7 @@ handheld/
 
 - [x] `pins.h` with every pin
 - [x] Display driver: fill screen, pixels, rectangles, text
-- [ ] Framebuffer + `Canvas` class, push full frame to screen
+- [x] Framebuffer + `Canvas` class, push full frame to screen
 - [x] Input driver: debounced buttons → `InputEvent` queue
 - [ ] Audio: beep on button press
 - [ ] Fixed-timestep main loop (target 30 FPS)

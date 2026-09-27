@@ -27,8 +27,3 @@ void Display::present()
         yield();
     }
 }
-
-Canvas &Display::getCanvas()
-{
-    return *_canvas;
-}

@@ -3,16 +3,16 @@
 #include "core/canvas.h"
 class Display
 {
-    Canvas *_canvas = nullptr;
-
 public:
+    Canvas *getCanvas() { return _canvas; }
+
     static constexpr int WIDTH = 320;
     static constexpr int HEIGHT = 240;
 
     void begin();
     void present();
-    Canvas &getCanvas();
 
 private:
     uint16_t *_fb = nullptr;
+    Canvas *_canvas = nullptr;
 };
