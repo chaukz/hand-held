@@ -3,8 +3,11 @@
 #include "hal/input.h"
 #include "hal/display.h"
 #include "core/canvas.h"
+#include "hal/audio.h"
 
+Audio audio;
 Display display;
+Input input;
 
 static constexpr uint32_t FRAME_MS = 33; // ~30 FPS
 Canvas *canvas = nullptr;
@@ -12,6 +15,8 @@ Canvas *canvas = nullptr;
 void setup()
 {
     Serial.begin(115200);
+    input.begin();
+    audio.begin();
     Serial.println("Handheld boot OK");
     display.begin();
     Canvas *current = display.getCanvas();
@@ -27,6 +32,22 @@ void setup()
 
 void loop()
 {
+    input.poll();
+    InputEvent event;
+
+    while (input.nextEvent(event))
+    {
+        if (event.type == InputType::Pressed)
+        {
+            Serial.printf("Button %d pressed\n", static_cast<int>(event.button));
+            if (event.button == Button::A)
+            {
+                audio.playTone(880, 100); // Play a 880 Hz tone for 100 ms
+            }
+        }
+    }
+    audio.update();
+    
     if (canvas == nullptr)
     {
         return;
