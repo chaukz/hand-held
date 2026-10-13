@@ -9,7 +9,10 @@ Audio audio;
 Display display;
 Input input;
 
-static constexpr uint32_t FRAME_MS = 33; // ~30 FPS
+static constexpr uint32_t FIXED_STEP_US = 1000000UL / 30UL;
+static constexpr uint8_t MAX_CATCH_UP_STEPS = 5;
+static uint32_t previousLoopUs = 0;
+static uint32_t accumulatorUs = 0;
 Canvas *canvas = nullptr;
 
 void setup()
@@ -28,6 +31,7 @@ void setup()
     {
         canvas = current;
     }
+    previousLoopUs = micros();
 }
 
 void loop()
@@ -47,21 +51,30 @@ void loop()
         }
     }
     audio.update();
-    
+
+    const uint32_t nowUs = micros();
+    const uint32_t elapsedUs = nowUs - previousLoopUs;
+    previousLoopUs = nowUs;
+    accumulatorUs += elapsedUs;
+
     if (canvas == nullptr)
     {
         return;
     }
-    static uint32_t lastMs = 0;
-    uint32_t now = millis();
-    uint32_t elapsed = now - lastMs;
 
-    if (elapsed < FRAME_MS)
+    uint8_t steps = 0;
+    while (accumulatorUs >= FIXED_STEP_US && steps < MAX_CATCH_UP_STEPS)
+    {
+        accumulatorUs -= FIXED_STEP_US;
+        ++steps;
+    }
+
+    if (steps == 0)
         return;
-    lastMs = now;
 
-    float dt = elapsed / 1000.0f;
-    (void)dt; // used once drivers and apps are wired in
+    // Drop excess whole steps after a long stall; retain only the fractional remainder.
+    if (accumulatorUs >= FIXED_STEP_US)
+        accumulatorUs %= FIXED_STEP_US;
 
     canvas->clear(0x0000);             // Clear the canvas to black
     canvas->drawPixel(10, 10, 0xFFFF); // Draw a white pixel at (10, 10)

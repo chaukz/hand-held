@@ -169,8 +169,8 @@ handheld/
 - [x] Display driver: fill screen, pixels, rectangles, text
 - [x] Framebuffer + `Canvas` class, push full frame to screen
 - [x] Input driver: debounced buttons → `InputEvent` queue
-- [ ] Audio: beep on button press
-- [ ] Fixed-timestep main loop (target 30 FPS)
+- [x] Audio: beep on button press
+- [x] Fixed-timestep main loop (target 30 FPS)
 - [ ] Test-screen app: shows which buttons are pressed
 - [ ] Snake as a standalone `App`
 
