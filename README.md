@@ -1,249 +1,160 @@
-# Handheld + Mini-OS (working name)
+# hand-held
 
-A DIY handheld console built on an **ESP32-S3**, prototyped entirely in **Wokwi** first, with a custom **mini-OS** written in C++. Real hardware comes later; the firmware is designed so the same code runs on both.
+**A C++ mini-OS and handheld console for the ESP32-S3, with a Linux desktop simulator.**
 
-> The OS is not installed separately. It _is_ the firmware: drivers, services, a launcher, and apps compiled into one image and flashed to the chip. The handheld is usable from Stage 1 onward, and the OS grows around the first app.
+The goal is a portable application runtime with a launcher, games, input, graphics, audio, and eventually SD-card storage and CHIP-8 support. The ESP32-S3 firmware is the mini-OS; the desktop build is a development simulator, **not Linux running on the microcontroller**.
 
----
+> **Status (31 October 2026):** Stage 0 is documented as complete; Stage 1 is in progress. The desktop simulator is an early rendering scaffold. Builds, hardware behavior, and GitHub Actions results have not yet been verified. No physical parts are required to develop the desktop side.
 
-## Goals
+## Current progress
 
-- Learn real embedded C++: drivers, timing, interrupts, memory limits, RTOS tasks.
-- Build a clean layered architecture where apps never touch hardware directly.
-- End with a device that runs multiple apps, saves data to SD, and loads CHIP-8 games from files.
-- Keep everything simulatable in Wokwi until parts are bought.
+| Area | Status | Notes |
+| --- | --- | --- |
+| Wokwi circuit | Documented complete | ESP32-S3, ILI9341, microSD, eight buttons, buzzer |
+| GPIO mapping | Implemented | `src/hal/pins.h` |
+| Display and RGB565 Canvas | Implemented | 320×240 framebuffer, strip-based SPI transfer |
+| Button input and audio | Implemented | Input event polling and buzzer driver |
+| Fixed-step timing | Partial | 30 Hz accumulator exists; no app update integration yet |
+| Desktop simulator | Scaffold | SDL2 window and Canvas drawing demo; no shared app runtime yet |
+| Native Canvas tests | Added, unverified | CTest target and GitHub Actions workflow |
+| Test-screen / Snake | Not implemented | Next Stage 1 applications |
+| Launcher, storage, FreeRTOS, CHIP-8 | Planned | Later stages |
+| Physical device | Not validated | Hardware purchase and testing deferred |
 
-## Non-goals (for now)
+The current ESP32 loop renders a static pixel each frame. A full-screen transfer on every frame can make Wokwi slow; performance improvements are planned, not yet benchmarked.
 
-- Linux. The ESP32-S3 has no MMU and too little RAM for a practical Linux system. A Linux handheld would be a separate project on a Pi Zero 2 W or Luckfox Pico.
-- Wi-Fi features, touchscreens, or colour audio. These can come after Stage 5.
+## Quick start
 
----
+### Desktop simulator (Linux)
 
-## Hardware (Wokwi)
+Dependencies: CMake, C++17 compiler, `pkg-config`, and SDL2 development files.
 
-| Part                      | Wokwi type                 | Purpose                    |
-| ------------------------- | -------------------------- | -------------------------- |
-| ESP32-S3 DevKitC-1        | `board-esp32-s3-devkitc-1` | Main MCU                   |
-| ILI9341 320×240 TFT (SPI) | `wokwi-ili9341`            | Screen                     |
-| microSD card (SPI)        | `wokwi-microsd-card`       | Storage (FAT16 in sim)     |
-| 8× pushbutton             | `wokwi-pushbutton`         | D-pad, A, B, Start, Select |
-| Buzzer                    | `wokwi-buzzer`             | Sound                      |
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+./build/handheld-desktop
+```
 
-### Pin map (v0.1)
+The demo opens a 640×480 window showing a scaled 320×240 RGB565 framebuffer. Press **Escape** or close the window to exit. It does **not** yet emulate buttons, games, or ESP32 peripherals.
 
-Screen and SD card share one SPI bus with separate chip-select pins. Buttons use `INPUT_PULLUP` and connect to GND, so **pressed = LOW**.
+Run the Canvas tests:
 
-Pins avoided on purpose: 0, 3, 45, 46 (strapping), 19, 20 (USB), 26 to 37 (flash/PSRAM on N16R8 boards).
+```bash
+ctest --test-dir build --output-on-failure
+```
 
-| Signal     | GPIO | Notes                       |
-| ---------- | ---- | --------------------------- |
-| SPI SCK    | 12   | Shared                      |
-| SPI MOSI   | 11   | Shared                      |
-| SPI MISO   | 13   | Shared (SD needs it)        |
-| TFT CS     | 10   |                             |
-| TFT DC     | 9    |                             |
-| TFT RST    | 8    |                             |
-| TFT LED    | 3V3  | Backlight always on for now |
-| SD CS      | 14   |                             |
-| BTN UP     | 4    |                             |
-| BTN DOWN   | 5    |                             |
-| BTN LEFT   | 6    |                             |
-| BTN RIGHT  | 7    |                             |
-| BTN A      | 15   |                             |
-| BTN B      | 16   |                             |
-| BTN START  | 17   |                             |
-| BTN SELECT | 18   |                             |
-| BUZZER     | 21   | PWM via `ledc` / `tone()`   |
+On NixOS, make these dependencies available in a development shell before running CMake. The repository does not yet include a `flake.nix` or `shell.nix`.
 
-All pin numbers live in **one file** (`src/hal/pins.h`) so moving to real hardware is a one-file change.
+### ESP32-S3 firmware (PlatformIO + Arduino)
 
----
+```bash
+pio run -e esp32-s3-devkitc-1
+```
+
+To run Wokwi, build the firmware first and launch the Wokwi VS Code extension using `diagram.json` and `wokwi.toml`. The latter points at the PlatformIO `.bin` and `.elf` outputs. The existing firmware uses `TFT_eSPI`; the desktop target uses SDL2. **Do not flash the desktop executable to the ESP32.**
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────┐
-│  Apps          Snake · Life · Calc · CHIP-8  │
-├──────────────────────────────────────────────┤
-│  System UI     Launcher · Settings · Files   │
-├──────────────────────────────────────────────┤
-│  Core          AppManager · EventQueue ·     │
-│                Timing · (later) FreeRTOS     │
-├──────────────────────────────────────────────┤
-│  HAL           Display · Input · Audio ·     │
-│                Storage · pins.h              │
-├──────────────────────────────────────────────┤
-│  Hardware      ESP32-S3 + TFT + SD + buttons │
-└──────────────────────────────────────────────┘
+```text
+                 Applications (planned)
+          Snake · Launcher · Life · CHIP-8
+                         |
+               Shared core and Canvas
+                         |
+              Platform-specific adapters
+                  /             \
+         Linux / SDL2       ESP32-S3 / Arduino
+         window, keyboard   TFT, buttons, buzzer, SD
 ```
 
-### Rules
+The separation is **in progress**, not complete: Canvas is portable, but the ESP32 input, display and audio implementations still depend on Arduino.
 
-1. **Each layer only talks to the layer directly below it.** Apps call `Canvas` and receive `InputEvent`s; they never call `digitalRead()` or SPI functions.
-2. **No `delay()` in the main loop.** Use a fixed-timestep loop driven by `millis()` / `micros()`.
-3. **Pins are only defined in `pins.h`.**
-4. **Every app implements `App`.** The launcher only knows about the interface.
-5. **Know your memory.** A full 320×240 16-bit framebuffer is 150 KB. Allocate it once at boot, check that the allocation succeeded, and fall back to strip rendering (e.g. 320×40 chunks) if it didn't.
+### Repository layout
 
-### Core interfaces (draft)
-
-```cpp
-// core/input_event.h
-enum class Button : uint8_t { Up, Down, Left, Right, A, B, Start, Select };
-enum class InputType : uint8_t { Pressed, Released, Held };
-
-struct InputEvent {
-    Button    button;
-    InputType type;
-    uint32_t  timestampMs;
-};
+```text
+CMakeLists.txt                Desktop build and native tests
+desktop/main.cpp              SDL2 rendering demo
+tests/canvas_test.cpp         Canvas drawing tests
+.github/workflows/desktop.yml Desktop CI
+platformio.ini                ESP32-S3 Arduino build
+wokwi.toml                    Wokwi firmware paths
+diagram.json                  Wokwi circuit
+src/main.cpp                  ESP32 boot and loop
+src/core/canvas.{h,cpp}       Shared RGB565 drawing API
+src/hal/                      ESP32 display, input, audio, pins
 ```
-
-```cpp
-// core/app.h
-class Canvas;  // from hal/display.h
-
-class App {
-public:
-    virtual const char* name() = 0;
-    virtual void onStart() {}
-    virtual void onStop() {}
-    virtual void onInput(const InputEvent& e) = 0;
-    virtual void update(float dt) = 0;       // dt in seconds
-    virtual void draw(Canvas& c) = 0;
-    virtual ~App() = default;
-};
-```
-
----
-
-## Project layout
-
-Set up for PlatformIO + the Wokwi VS Code extension (works on NixOS). The same files can be pasted into tabs on wokwi.com.
-
-```
-handheld/
-├── README.md
-├── platformio.ini
-├── wokwi.toml
-├── diagram.json            # Wokwi circuit
-├── src/
-│   ├── main.cpp            # boot + main loop only
-│   ├── hal/
-│   │   ├── pins.h
-│   │   ├── display.h/.cpp  # ILI9341 + Canvas + framebuffer
-│   │   ├── input.h/.cpp    # debouncing -> InputEvents
-│   │   ├── audio.h/.cpp    # buzzer tones
-│   │   └── storage.h/.cpp  # SD card (Stage 3)
-│   ├── core/
-│   │   ├── app.h
-│   │   ├── input_event.h
-│   │   ├── event_queue.h/.cpp
-│   │   └── app_manager.h/.cpp  # (Stage 2)
-│   └── apps/
-│       ├── test_screen/    # Stage 1
-│       ├── snake/          # Stage 1
-│       ├── launcher/       # Stage 2
-│       ├── life/           # Stage 2 (port of Game of Life)
-│       └── chip8/          # Stage 5
-└── docs/
-    └── notes.md            # decisions, bugs, measurements
-```
-
----
 
 ## Roadmap
 
-### Stage 0: Circuit
+### Stage 0 — Circuit
+- [x] Create ESP32-S3 Wokwi circuit
+- [x] Wire display, SD, eight buttons, buzzer
+- [x] Document serial boot output
 
-- [x] Create the Wokwi project with the ESP32-S3
-- [x] Wire the ILI9341, SD card, 8 buttons and buzzer per the pin map
-- [x] Serial monitor prints a boot message
+### Stage 1 — Playable first app
+- [x] Centralize pins
+- [x] Add display and framebuffer/Canvas
+- [x] Add button events and buzzer
+- [x] Add fixed-step timing accumulator
+- [ ] Integrate app update/draw into the fixed-step loop
+- [ ] Implement button test-screen app
+- [ ] Implement playable Snake
+- [ ] Verify stable rendering and timing
 
-**Done when:** the circuit runs and prints to serial.
+### Desktop development track
+- [x] Make Canvas independent of Arduino
+- [x] Add SDL2 rendering scaffold and CMake target
+- [x] Add native Canvas tests and CI configuration
+- [ ] Confirm desktop CI passes
+- [ ] Map keyboard to shared input events
+- [ ] Extract reusable app lifecycle and game logic
+- [ ] Run test-screen and Snake on desktop
+- [ ] Reduce unnecessary full-screen transfers in Wokwi
 
-### Stage 1: One program (the handheld is usable)
+### Stage 2 — Mini-OS launcher
+- [ ] AppManager registration, lifecycle, switching
+- [ ] Scrollable launcher and Start+Select shortcut
+- [ ] Game of Life and a third app
 
-- [x] `pins.h` with every pin
-- [x] Display driver: fill screen, pixels, rectangles, text
-- [x] Framebuffer + `Canvas` class, push full frame to screen
-- [x] Input driver: debounced buttons → `InputEvent` queue
-- [x] Audio: beep on button press
-- [x] Fixed-timestep main loop (target 30 FPS)
-- [ ] Test-screen app: shows which buttons are pressed
-- [ ] Snake as a standalone `App`
+### Stage 3 — Storage and settings
+- [ ] Mount SD and browse files
+- [ ] Persist high scores and settings
 
-**Done when:** Snake is playable with no flicker and no `delay()` calls.
+### Stage 4 — FreeRTOS
+- [ ] Separate UI, input and audio tasks
+- [ ] Queues and performance diagnostics
 
-### Stage 2: The OS appears
+### Stage 5 — CHIP-8
+- [ ] Interpreter and graphics/input integration
+- [ ] Load ROMs from storage and launch from file browser
 
-- [ ] `AppManager`: register apps, start/stop, switch
-- [ ] Launcher app with a scrollable menu
-- [ ] Start+Select returns to the launcher from any app
-- [ ] Port Game of Life as an app
-- [ ] A third app (calculator or stopwatch)
+### Hardware validation (later)
+- [ ] Test display SPI speed, buttons, memory and sound on a real ESP32-S3
+- [ ] Validate power and battery circuitry before portable use
 
-**Done when:** you can move between at least three apps from a menu.
+## Wokwi wiring (v0.1)
 
-### Stage 3: Storage + settings
+Screen and SD share SPI. Buttons use pull-ups (pressed = LOW).
 
-- [ ] Mount the SD card, list files
-- [ ] File browser app
-- [ ] Save/load high scores
-- [ ] Settings app (volume, brightness placeholder), saved to SD
+| Signal | GPIO | Signal | GPIO |
+| --- | --- | --- | --- |
+| SPI SCK | 12 | SPI MOSI | 11 |
+| SPI MISO | 13 | TFT CS | 10 |
+| TFT DC | 9 | TFT RST | 8 |
+| SD CS | 14 | Buzzer | 21 |
+| Up | 4 | Down | 5 |
+| Left | 6 | Right | 7 |
+| A | 15 | B | 16 |
+| Start | 17 | Select | 18 |
 
-**Done when:** settings and scores survive a restart.
+TFT backlight is tied to 3V3 in the simulated circuit. Recheck pin compatibility against the exact board purchased.
 
-### Stage 4: FreeRTOS
+## Hardware plan
 
-- [ ] Separate tasks: input, audio, UI/app
-- [ ] Queues between tasks instead of shared globals
-- [ ] Measure frame time and free heap; show them on a debug overlay
+ESP32-S3 with PSRAM, compatible SPI TFT, tactile buttons, microSD, buzzer, and eventually a protected battery/charging system. Wokwi cannot validate actual electrical behavior, power consumption, or physical SPI throughput.
 
-**Done when:** sound plays without stuttering the UI.
+## Development workflow
 
-### Stage 5: Loading programs
+Work is taking place on `feature/desktop-simulator` while `main` remains unchanged. Changes should be incremental and reviewable. CI and physical-device validation must be distinguished from merely writing or committing code.
 
-- [ ] CHIP-8 interpreter as an app
-- [ ] Load ROMs from SD (in Wokwi, store them as hex text files, since uploading binary files to the sim SD card is a paid feature)
-- [ ] ROM picker in the file browser
-
-**Done when:** a CHIP-8 game loaded from the card is playable.
-
-### Stretch
-
-- [ ] Tiny shell over serial (`ls`, `run snake`, `free`)
-- [ ] Custom PCB in KiCad + 3D-printed case
-- [ ] Wi-Fi app (clock sync, high-score upload)
-
----
-
-## Real hardware (later)
-
-Rough list, check local prices before buying:
-
-- ESP32-S3 dev board with PSRAM (N16R8)
-- 2.4" or 2.8" ILI9341/ST7789 SPI TFT (many include an SD slot)
-- Tactile buttons, slide switch for power
-- Passive buzzer, or MAX98357A I2S amp + small speaker
-- LiPo cell + charger board **with protection circuitry**
-- Perfboard first, then a custom PCB
-
-Battery safety: use protected cells, avoid punctures and shorts, and don't leave it charging unattended until the power circuit is proven.
-
----
-
-## Wokwi limitations to remember
-
-- The sim is great for logic, timing and UI; it can't show real SPI speed, power draw, or button bounce accurately. Re-test all of these on hardware.
-- Don't rely on PSRAM in the sim. Design to fit in internal RAM.
-- The simulated SD card is formatted FAT16 and gets your project files copied onto it.
-
----
-
-## Log
-
-| Date       | Note                                                                                              |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| 2026-09-25 | Project started. ESP32-S3 chosen over Pico for dual core + better Wokwi support for display work. |
+**Next objective:** get a passing desktop build, wire up shared input and app lifecycle, and make Snake playable without depending on Wokwi.
